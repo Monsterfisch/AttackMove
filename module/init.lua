@@ -26,8 +26,8 @@
 local MODULE_NAME = "attack-move"
 
 local DEFAULTS = {
-  waypoints = { always = true, continue_move = true },
-  stacking = { alt = true },
+  waypoints = { always = false, continue_move = false },
+  stacking = { alt = false },
 }
 
 -- How long after a route was ordered it still counts as "ordered, not started yet", in game
@@ -72,9 +72,9 @@ local ROUTE_GROUP_SIZE = { 0x5F, { 0x69, 0xD2 } }    -- imul edx, edx, size / 4
 local ROUTE_POINTS = { 0x68, { 0x0F, 0xBF, 0x94, 0x8F } }
 local GROUP_UID = 0x34
 
--- The game tick counter (the stance search's frequency test in updateUnits).
-local AOB_TICKS = "8B 87 50 0A 00 00 8B 8F 98 09 00 00 8B 15"
-local TICKS_OPERAND = 0x0E
+-- The game tick counter: mov ecx, [edi+0x998] / mov edx, [ticks] in updateUnits. The mask load
+-- before it is patched by other modules.
+local AOB_TICKS = "8B 8F 98 09 00 00 8B 15 ? ? ? ?"
 
 -- The two places where a click with troops selected asks for a unit of the player under the
 -- cursor: push 5 / mov ecx, UnitsState / call getUnitInHitBox.
@@ -154,11 +154,9 @@ mov dword [RALLY_COUNT],2
 mov eax,[TICKS]
 mov [LAST+8],eax
 mov dword [LAST+0x14],2
-inc dword [DIAG+8]
 jmp finish
 fresh:
 mov dword [RALLY_COUNT],1
-inc dword [DIAG+4]
 started:
 mov ecx,[TRIBES]
 mov [LAST],ecx
@@ -173,7 +171,6 @@ mov eax,[MOUSE_Y]
 mov [LAST+0x10],eax
 mov dword [LAST+0x14],2
 finish:
-inc dword [DIAG]
 popad
 ORIGINAL
 jmp RESUME
@@ -219,10 +216,8 @@ jmp GET_UNIT
 ---------------------------------------------------------------------------------------
 
 local function scan(pattern, purpose)
-  local ok, address = pcall(core.AOBScan, pattern)
-  if not ok or address == nil then
-    error(MODULE_NAME .. ": could not find " .. purpose)
-  end
+  local found, address = pcall(core.AOBScan, pattern)
+  if not found then error(purpose .. " not found", 0) end
   return address
 end
 
@@ -278,7 +273,9 @@ end
 local function setting(config, group, name)
   local section = config[group]
   if type(section) == "table" and section[name] ~= nil then
-    return section[name]
+    local value = section[name]
+    if type(value) == "boolean" then return value end
+    log(ERROR, "Attack Move: " .. name .. " must be on or off. Using the default.")
   end
   return DEFAULTS[group][name]
 end
@@ -287,7 +284,7 @@ end
 -- The changes
 ---------------------------------------------------------------------------------------
 
-local function patchWaypoints(shift, continueMove)
+local function patchWaypoints(shift, continueMove, ticks)
   local route = scan(AOB_ROUTE, "where a group walks its route")
   local patrol = readOperand(shift, SHIFT_PATROL, "the patrol button")
   local tribes = patrol - TRIBES_PATROL
@@ -310,11 +307,10 @@ local function patchWaypoints(shift, continueMove)
     GIVE_MOVE = readCallTarget(shift, SHIFT_GIVE_MOVE, "the move order"),
     MOUSE_X = readOperand(shift, SHIFT_MOUSE_X, "the clicked tile"),
     MOUSE_Y = readOperand(shift, SHIFT_MOUSE_Y, "the clicked tile"),
-    TICKS = core.readInteger(scan(AOB_TICKS, "the tick counter") + TICKS_OPERAND),
+    TICKS = ticks,
     PENDING_TICKS = PENDING_TICKS,
     LAST = core.allocate(0x18, true),
     CONTINUE_ON = core.allocate(4, true),
-    DIAG = core.allocate(16, true),
   }
   core.writeByte(values.CONTINUE_ON, continueMove and 1 or 0)
 
@@ -330,8 +326,6 @@ local function patchWaypoints(shift, continueMove)
   local record = assemble(NORMAL_MOVE, values, originalBytes(normalMove, NORMAL_MOVE_HOOK_SIZE))
   jumpTo(site, stub, SHIFT_HOOK_SIZE)
   jumpTo(normalMove, record, NORMAL_MOVE_HOOK_SIZE)
-  log(INFO, string.format("%s: Shift waypoints work at any time (groups 0x%X, size 0x%X, route flag "
-    .. "+0x%X)", MODULE_NAME, tribes, groupSize, values.ROUTE_FLAG))
 end
 
 local function patchAltStacking(shift)
@@ -362,13 +356,38 @@ local function patchAltStacking(shift)
 end
 
 local function enable(self, config)
-  config = config or {}
-  local shift = scan(AOB_SHIFT, "the Shift-click order")
-  if setting(config, "waypoints", "always") then
-    patchWaypoints(shift, setting(config, "waypoints", "continue_move"))
+  config = type(config) == "table" and config or {}
+  local waypoints = setting(config, "waypoints", "always")
+  local alt = setting(config, "stacking", "alt")
+  if not waypoints and not alt then
+    return
   end
-  if setting(config, "stacking", "alt") then
-    patchAltStacking(shift)
+  local ticks
+  if waypoints then
+    local found, site = pcall(core.AOBScan, AOB_TICKS)
+    if found then
+      ticks = core.readInteger(site + 8)
+    else
+      log(ERROR, "Attack-move waypoints are off. The game tick counter was not found.")
+    end
+  end
+  if not ticks and not alt then return end
+
+  local function install(feature, fn, ...)
+    local ok, message = pcall(fn, ...)
+    if not ok then log(ERROR, feature .. " is off. " .. tostring(message)) end
+  end
+  local found, shift = pcall(core.AOBScan, AOB_SHIFT)
+  if not found then
+    if ticks then log(ERROR, "Attack-move waypoints are off. The Shift-click order was not found.") end
+    if alt then log(ERROR, "Alt stacking is off. The Shift-click order was not found.") end
+    return
+  end
+  if ticks then
+    install("Attack-move waypoints", patchWaypoints, shift, setting(config, "waypoints", "continue_move"), ticks)
+  end
+  if alt then
+    install("Alt stacking", patchAltStacking, shift)
   end
 end
 

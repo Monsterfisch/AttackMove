@@ -1,0 +1,9 @@
+alt: Alt-Klick bewegt ausgewählte Truppen auf ein besetztes Feld
+always: Shift-Klick-Wegpunkte korrigieren
+bugfixes: Fehlerkorrekturen
+continue_move: Aktuelle Bewegung vor neuen Wegpunkten beenden
+qol: Komfort
+tags.behavior: Verhalten
+tags.bugfixes: Fehlerkorrekturen
+cat_unit_controls: Truppensteuerung
+cat_unit_orders: Truppenbefehle und Zielwahl

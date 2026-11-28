@@ -1,0 +1,9 @@
+alt: Alt+kattintás a kijelölt csapatokat foglalt helyre mozgatja
+always: Shift+kattintásos útpontok javítása
+bugfixes: Hibajavítások
+continue_move: Aktuális mozgás befejezése az új útpontok előtt
+qol: Kényelmi funkciók
+tags.behavior: Viselkedés
+tags.bugfixes: Hibajavítások
+cat_unit_controls: Egységirányítás
+cat_unit_orders: Egységparancsok és célpontok
